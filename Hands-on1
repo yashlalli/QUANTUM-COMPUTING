@@ -1,0 +1,30 @@
+from qiskit import QuantumCircuit
+from IPython.display import display
+
+# X gate
+x_circ = QuantumCircuit(1)
+x_circ.x(0)
+
+# H gate
+h_circ = QuantumCircuit(1)
+h_circ.h(0)
+
+# Z gate
+z_circ = QuantumCircuit(1)
+z_circ.z(0)
+
+# CNOT gate
+cnot_circ = QuantumCircuit(2)
+cnot_circ.cx(0, 1)
+
+# Bell state
+bell_circ = QuantumCircuit(2)
+bell_circ.h(0)
+bell_circ.cx(0, 1)
+
+# Display all
+display(x_circ.draw('mpl'))
+display(h_circ.draw('mpl'))
+display(z_circ.draw('mpl'))
+display(cnot_circ.draw('mpl'))
+display(bell_circ.draw('mpl'))
