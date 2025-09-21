@@ -1,0 +1,157 @@
+# Imports
+import math
+import numpy as np
+from fractions import Fraction
+from collections import Counter
+from qiskit import QuantumCircuit, transpile
+from qiskit_aer import AerSimulator
+from qiskit.circuit.library import QFT, UnitaryGate
+
+# Helper math functions
+def is_coprime(a, b):
+    return math.gcd(a, b) == 1
+
+def continued_fraction_expansion(x, max_den=1_000_000):
+    frac = Fraction(x).limit_denominator(max_den)
+    return frac.numerator, frac.denominator
+
+def fraction_from_phase(phase, qcount):
+    y_over_2q = phase / (2**qcount)
+    num, den = continued_fraction_expansion(y_over_2q, max_den=2**qcount)
+    return num, den
+
+def get_most_likely_result(counts):
+    measured_str = Counter(counts).most_common(1)[0][0]
+    return int(measured_str, 2), measured_str
+
+# Quantum building blocks
+def build_multiplication_mod_matrix(a, N):
+    n = math.ceil(math.log2(N))
+    dim = 2 ** n
+    U = np.zeros((dim, dim), dtype=complex)
+    for x in range(dim):
+        if x < N:
+            y = (a * x) % N
+            U[y, x] = 1.0
+        else:
+            U[x, x] = 1.0
+    return U
+
+def controlled_powered_unitary_gate(U_matrix, power):
+    U_pow = np.linalg.matrix_power(U_matrix, power)
+    return UnitaryGate(U_pow)
+
+def inverse_qft_circuit(n):
+    return QFT(num_qubits=n, inverse=True, do_swaps=True)
+
+# Shor's order finding
+def shor_order_finding(N, a, qcount=None, shots=1024, seed_sim=42, verbose=True):
+    if not (1 < a < N) or math.gcd(a, N) != 1:
+        raise ValueError("a must be 1 < a < N and coprime to N")
+
+    n = math.ceil(math.log2(N))
+    if qcount is None:
+        qcount = 2 * n
+
+    U = build_multiplication_mod_matrix(a, N)
+    total_qubits = qcount + n
+    qc = QuantumCircuit(total_qubits, qcount)
+
+    counting_qubits = list(range(qcount))
+    target_qubits = list(range(qcount, qcount + n))
+
+    # Initialize target register to |1>
+    qc.x(target_qubits[0])
+
+    # Apply Hadamards to counting register
+    qc.h(counting_qubits)
+
+    # Apply controlled-U^(2^j) gates for each counting qubit
+    for j in range(qcount):
+        power = 2 ** j
+        U_pow_gate = controlled_powered_unitary_gate(U, power).control()
+        qc.append(U_pow_gate, [counting_qubits[j]] + target_qubits)
+
+    # Apply inverse QFT on counting register
+    invqft = inverse_qft_circuit(qcount)
+    qc.compose(invqft, qubits=counting_qubits, inplace=True)
+
+    # Add measurement of counting register
+    qc.measure(counting_qubits, list(range(qcount)))
+
+    # Running on simulator
+    sim = AerSimulator(seed_simulator=seed_sim)
+    transpiled = transpile(qc, sim, seed_transpiler=seed_sim)
+    result = sim.run(transpiled, shots=shots).result()
+    counts = result.get_counts()
+
+    y_int, y_str = get_most_likely_result(counts)
+    if verbose:
+        print(f"Most frequent measurement (counting register): {y_str} -> int {y_int}")
+
+    s, r_candidate = fraction_from_phase(y_int, qcount)
+    if verbose:
+        print(f"Continued fraction approx: s={s}, r_candidate={r_candidate}")
+
+    r = r_candidate
+    for mult in range(1, 11):
+        r_try = r * mult
+        if r_try != 0 and pow(a, r_try, N) == 1:
+            if verbose:
+                print(f"Found order r = {r_try}")
+            return r_try, counts
+    return None, counts
+
+# Classical postprocessing
+def shor_factor(N, shots=1024, tries=5, verbose=True):
+    if N % 2 == 0:
+        return 2, N // 2
+    for attempt in range(tries):
+        a = np.random.randint(2, N-1)
+        if math.gcd(a, N) != 1:
+            d = math.gcd(a, N)
+            return d, N // d
+
+        if verbose:
+            print(f"Attempt {attempt+1}: trying base a = {a}")
+
+        r, counts = shor_order_finding(N, a, shots=shots, verbose=verbose)
+        if r is None or r % 2 != 0:
+            continue
+
+        apow = pow(a, r // 2, N)
+        candidate1 = math.gcd(apow - 1, N)
+        candidate2 = math.gcd(apow + 1, N)
+
+        if candidate1 not in [1, N]:
+            return candidate1, N // candidate1
+        if candidate2 not in [1, N]:
+            return candidate2, N // candidate2
+    return None
+
+# Test
+print("Factoring N = 15")
+factors_15 = shor_factor(15, shots=1024, tries=5, verbose=True)
+print("Factors of 15:", factors_15)
+
+print("\nFactoring N = 21")
+factors_21 = shor_factor(21, shots=1024, tries=5, verbose=True)
+print("Factors of 21:", factors_21)
+
+
+from qiskit import QuantumCircuit
+from qiskit.quantum_info import Statevector
+from qiskit.visualization import plot_bloch_multivector
+
+# Build a 4-qubit GHZ state circuit
+num_qubits = 4
+qc = QuantumCircuit(num_qubits)
+qc.h(0)
+for i in range(1, num_qubits):
+    qc.cx(0, i)
+
+# Simulate the statevector
+state = Statevector.from_instruction(qc)
+
+# Visualize Bloch spheres for all qubits (entangled state)
+plot_bloch_multivector(state)
